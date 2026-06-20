@@ -70,6 +70,12 @@ os.chdir(rootDir + '/FoamYade')
 os.system('wclean')
 os.system('wmake')
 
+# PgfYade coupling (minimal PGF-native OF-side coupling, libPgfYadeCoupling.so)
+print("Compiling PgfYade-OpenFOAM coupling module")
+os.chdir(rootDir + '/PgfYade')
+os.system('wclean')
+os.system('wmake')
+
 """
 # # Solvers...
 print("Compiling icoFoamYade solver")
