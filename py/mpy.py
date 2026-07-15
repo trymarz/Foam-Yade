@@ -96,6 +96,19 @@ fluidBodies = []
 USE_CPP_REALLOC = True
 USE_CPP_INTERS = False  #sending intersections using mpi4py sometimes fails (dependent on mpi4py version, needs confirmation) (ERR : MPI_ERR_TRUNCATE)
 
+# engine types recognized as fluid-coupling engines when FLUID_COUPLING is enabled:
+# the legacy general CFD-DEM engine and the minimal PGF-native engine.
+FLUID_COUPLING_ENGINES = ("FoamCoupling", "YadeToPgfMpiCoupler")
+
+
+def fluidCouplingEngine():
+	'''Return the fluid-coupling engine present in O.engines: the legacy FoamCoupling or the PGF-native YadeToPgfMpiCoupler.'''
+	for e in O.engines:
+		if e.__class__.__name__ in FLUID_COUPLING_ENGINES:
+			return e
+	raise RuntimeError("FLUID_COUPLING is enabled but no coupling engine (one of " + str(FLUID_COUPLING_ENGINES) + ") is present in O.engines")
+
+
 ### Internals
 
 comm = None
@@ -1100,10 +1113,11 @@ def splitScene():
 				subD = O.subD
 
 		if FLUID_COUPLING:
-			fluidCoupling = typedEngine("FoamCoupling")
+			fluidCoupling = fluidCouplingEngine()
 			fluidCoupling.comm = comm
 			fluidCoupling.setIdList(fluidBodies)
-			fluidCoupling.couplingModeParallel = True
+			if hasattr(fluidCoupling, "couplingModeParallel"):  # legacy FoamCoupling only; YadeToPgfMpiCoupler auto-detects
+				fluidCoupling.couplingModeParallel = True
 			print("YADE MPY DONE SETTING ID LIST")
 
 		O._sceneObj.subdomain = rank
@@ -1345,7 +1359,7 @@ def mpirun(nSteps, np=None, withMerge=False):
 	if (np == 1):
 		mprint("single-core, fall back to O.run()")
 		if FLUID_COUPLING:
-			fluidCoupling = typedEngine("FoamCoupling")
+			fluidCoupling = fluidCouplingEngine()
 			fluidCoupling.comm = comm
 			fluidCoupling.setIdList(fluidBodies)
 
@@ -1378,7 +1392,7 @@ def mpirun(nSteps, np=None, withMerge=False):
 			wprint("mpirun command sent to ", w)
 
 	if FLUID_COUPLING:
-		fluidCoupling = typedEngine("FoamCoupling")
+		fluidCoupling = fluidCouplingEngine()
 		fluidCoupling.comm = comm
 
 	# split if needed
