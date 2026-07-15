@@ -241,6 +241,10 @@ ENDIF()
 
 # no flags for:
 #   + pkg/openfoam
+#   + pkg/pgfToYadeCoupling  (YadeToPgfMpiCoupler engine; auto-discovered like every
+#     pkg/ subdir and compiled into pkg_pgfToYadeCoupling. The YADE-side sources are
+#     guarded by #ifdef YADE_MPI, so the library is empty without ENABLE_MPI. The
+#     OF-side PgfToYadeMpiCoupler/ code is .C/.H and built by wmake, not CMake.)
 #   + pkg/polyhedra
 #   + postprocessing/image
 

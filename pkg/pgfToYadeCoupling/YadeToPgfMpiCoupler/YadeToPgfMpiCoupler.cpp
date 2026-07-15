@@ -2,16 +2,16 @@
 // FoamCoupling.cpp (c) 2019 Deepak Kunhappan.
 //
 // Differences from FoamCoupling:
-//   - sendBodyData()      : 7 doubles/particle (pos[3], vel[3], radius[1]); no angVel.
-//   - getParticleForce()  : 1 double/particle  (lambdaDot only).
-//   - setHydroForce()     : applies lambdaDot only; no force, no torque.
+//   - sendParticleKinematicsToPgf()      : 7 doubles/particle (pos[3], vel[3], radius[1]); no angVel.
+//   - receiveLambdaDotFromPgf()  : 1 double/particle  (lambdaDot only).
+//   - applyLambdaDotToParticles()     : applies lambdaDot only; no force, no torque.
 //   - getViscousTimeScale(): removed (dead stub).
 // FluidDomainBbox / Bo1_FluidDomainBbox_Aabb are registered by
 // FoamCoupling.cpp and reused here -- not re-registered.
 
 #ifdef YADE_MPI
 
-#include "PgfCoupling.hpp"
+#include "YadeToPgfMpiCoupler.hpp"
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpragmas"
 #pragma GCC diagnostic ignored "-Wsuggest-override"
@@ -28,17 +28,17 @@
 
 namespace yade { // Cannot have #include directive inside.
 
-CREATE_LOGGER(PgfCoupling);
-YADE_PLUGIN((PgfCoupling));
+CREATE_LOGGER(YadeToPgfMpiCoupler);
+YADE_PLUGIN((YadeToPgfMpiCoupler));
 
 
-void PgfCoupling::SetFoamSolver(const std::string& solverName, unsigned numProcs)
+void YadeToPgfMpiCoupler::SetPgfSolver(const std::string& solverName, unsigned numProcs)
 {
 	foamSolverName = solverName;
 	numFoamProcs   = numProcs;
 }
 
-void PgfCoupling::StartFoamSolver()
+void YadeToPgfMpiCoupler::spawnPgfSolverViaMpi()
 {
 	assert(initDone == false && "Coupling has been initialized!");
 	assert(!foamSolverName.empty() && "OpenFOAM solver has not been set.");
@@ -78,7 +78,7 @@ void PgfCoupling::StartFoamSolver()
 	if (localCommSize == 1) serialYade = true;
 	stride = localCommSize;
 	// initiate the communication with OF, get the mesh bounding boxes from openfoam.
-	getFluidDomainBbox();
+	receiveMeshBoundingBoxesFromPgf();
 	if (serialYade) {
 		MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 		MPI_Comm_size(MPI_COMM_WORLD, &commSize);
@@ -88,9 +88,9 @@ void PgfCoupling::StartFoamSolver()
 }
 
 
-void PgfCoupling::setNumParticles(int np) { numParticles = np; }
+void YadeToPgfMpiCoupler::setNumParticles(int np) { numParticles = np; }
 
-void PgfCoupling::setIdList(const std::vector<int>& alist)
+void YadeToPgfMpiCoupler::setIdList(const std::vector<int>& alist)
 {
 	bodyList.clear();
 	bodyList.resize(alist.size());
@@ -101,7 +101,7 @@ void PgfCoupling::setIdList(const std::vector<int>& alist)
 }
 
 
-void PgfCoupling::insertBodyId(int bId)
+void YadeToPgfMpiCoupler::insertBodyId(int bId)
 {
 	const auto& iter = std::find(bodyList.begin(), bodyList.end(), bId);
 	if (iter != bodyList.end()) {
@@ -112,7 +112,7 @@ void PgfCoupling::insertBodyId(int bId)
 	bodyListModified = true;
 }
 
-bool PgfCoupling::eraseId(int bId)
+bool YadeToPgfMpiCoupler::eraseId(int bId)
 {
 	auto it = std::find(bodyList.begin(), bodyList.end(), bId);
 	if (it != bodyList.end()) {
@@ -126,11 +126,11 @@ bool PgfCoupling::eraseId(int bId)
 }
 
 
-int PgfCoupling::getNumBodies() { return bodyList.size(); }
+int YadeToPgfMpiCoupler::getNumBodies() { return bodyList.size(); }
 
-std::vector<int> PgfCoupling::getIdList() { return bodyList; }
+std::vector<int> YadeToPgfMpiCoupler::getIdList() { return bodyList; }
 
-void PgfCoupling::exchangeDeltaT()
+void YadeToPgfMpiCoupler::syncTimestepsWithPgf()
 {
 	// Recv foamdt  first and broadcast;
 	MPI_Recv(&foamDeltaT, 1, MPI_DOUBLE, 1, TAG_FLUID_DT, MPI_COMM_WORLD, &status);
@@ -141,7 +141,7 @@ void PgfCoupling::exchangeDeltaT()
 }
 
 
-void PgfCoupling::getFluidDomainBbox()
+void YadeToPgfMpiCoupler::receiveMeshBoundingBoxesFromPgf()
 {
 
 	std::vector<std::vector<double>> minMaxBuff;
@@ -173,7 +173,7 @@ void PgfCoupling::getFluidDomainBbox()
 	}
 }
 
-void PgfCoupling::buildSharedIdsMap()
+void YadeToPgfMpiCoupler::buildSharedIdsMap()
 {
 	/*Builds the list of ids interacting with a fluid subdomain and stores those body ids that has intersections with several fluid domains.
 	 sharedIdsMapIndx = a vector of std::pair<Body::id_t, std::map<fluidDomainId, indexOfthebodyinthefluidDomain aka index in flbdy-> bIds> > */
@@ -222,7 +222,7 @@ void PgfCoupling::buildSharedIdsMap()
 }
 
 
-int PgfCoupling::ifSharedIdMap(const Body::id_t& testId)
+int YadeToPgfMpiCoupler::ifSharedIdMap(const Body::id_t& testId)
 {
 	int res = -1;
 	auto it = std::find_if(sharedIdsMapIndx.begin(), sharedIdsMapIndx.end(), [&testId](const std::pair<int, std::map<int, int>> elem) -> bool {
@@ -236,7 +236,7 @@ int PgfCoupling::ifSharedIdMap(const Body::id_t& testId)
 }
 
 
-void PgfCoupling::buildLocalIds()
+void YadeToPgfMpiCoupler::buildLocalIds()
 {
 	if (bodyList.size() == 0) {
 		LOG_ERROR("Ids for coupling has no been set, FAIL!");
@@ -264,7 +264,7 @@ void PgfCoupling::buildLocalIds()
 }
 
 
-bool PgfCoupling::ifDomainBodies(const shared_ptr<Body>& b)
+bool YadeToPgfMpiCoupler::ifDomainBodies(const shared_ptr<Body>& b)
 {
 	// check if body is subdomain, wall, facet, or other fluidDomainBbox
 
@@ -283,7 +283,7 @@ bool PgfCoupling::ifDomainBodies(const shared_ptr<Body>& b)
 	}
 }
 
-void PgfCoupling::sendIntersectionToFluidProcs()
+void YadeToPgfMpiCoupler::sendNumberOfOverlapingParticlesToPgfProcs()
 {
 	// notify the fluid procs about intersection based on number of intersecting bodies.
 	// vector of sendRecvRanks, with each vector element containing the number of bodies, if no bodies, send negative val.
@@ -310,7 +310,7 @@ void PgfCoupling::sendIntersectionToFluidProcs()
 	}
 }
 
-void PgfCoupling::sendBodyData()
+void YadeToPgfMpiCoupler::sendParticleKinematicsToPgf()
 {
 	/* Send the particle kinematics to the associated fluid procs.
 	   7 doubles/particle: pos[3], vel[3], radius[1]. No angular velocity --
@@ -351,7 +351,7 @@ void PgfCoupling::sendBodyData()
 }
 
 
-void PgfCoupling::verifyParticleDetection()
+void YadeToPgfMpiCoupler::verifyAllParticlesWereLocatedByPgf()
 {
 	/* check if the sent particles are located on the fluid procs, verify all particles (in fluid coupling) owned by the yade process has been accounted for.
 	Some particles may intersect the  fluid domains bounding box but may not be actually inside the fluid mesh.
@@ -490,7 +490,7 @@ void PgfCoupling::verifyParticleDetection()
 }
 
 
-int PgfCoupling::findRankSharedIndxMap(const std::map<int, int>& tMap, const int& rnk)
+int YadeToPgfMpiCoupler::findRankSharedIndxMap(const std::map<int, int>& tMap, const int& rnk)
 {
 	// if found, return the index of the particle
 	for (const auto& prcIndx : tMap) {
@@ -501,7 +501,7 @@ int PgfCoupling::findRankSharedIndxMap(const std::map<int, int>& tMap, const int
 }
 
 
-void PgfCoupling::getParticleForce()
+void YadeToPgfMpiCoupler::receiveLambdaDotFromPgf()
 {
 	/* Receive the per-particle lambdaDot from the intersecting fluid procs.
 	   1 double/particle (lambdaDot only) -- no force, no torque. */
@@ -522,7 +522,7 @@ void PgfCoupling::getParticleForce()
 }
 
 
-void PgfCoupling::resetFluidDomains()
+void YadeToPgfMpiCoupler::clearFluidDomainParticleLists()
 {
 	// clear the vector ids held fluidDomainBbox->bIds
 	if (localRank == yadeMaster and not serialYade) {
@@ -540,7 +540,7 @@ void PgfCoupling::resetFluidDomains()
 }
 
 
-void PgfCoupling::setHydroForce()
+void YadeToPgfMpiCoupler::applyLambdaDotToParticles()
 {
 	/* Apply the received lambdaDot to each particle. The spheres are
 	   mechanical markers: no force, no torque is added -- only the
@@ -561,7 +561,7 @@ void PgfCoupling::setHydroForce()
 	}
 }
 
-void PgfCoupling::syncLambdaDotToMaster()
+void YadeToPgfMpiCoupler::syncLambdaDotToMaster()
 {
 	/* Mirror the coupled lambdaDot from the owning worker onto the master's
 	   body copies.
@@ -569,7 +569,7 @@ void PgfCoupling::syncLambdaDotToMaster()
 	   In MPI domain-decomposition runs the master (yadeMaster) keeps a full
 	   copy of every coupled body (mpy ERASE_REMOTE_MASTER=False) but is, by
 	   design, excluded from the OpenFOAM lambdaDot exchange in
-	   runCoupling()/setHydroForce(): it owns no fluid-coupled bodies and must
+	   exchangeParticleDataWithPgf()/applyLambdaDotToParticles(): it owns no fluid-coupled bodies and must
 	   not take part in the fluid-side MPI exchange (doing so would corrupt the
 	   sender counts the OpenFOAM ranks expect). Its body copies therefore never
 	   receive the lambdaDot and stay frozen at the initial radius.
@@ -616,7 +616,7 @@ void PgfCoupling::syncLambdaDotToMaster()
 	}
 }
 
-void PgfCoupling::exchangeDeltaTParallel()
+void YadeToPgfMpiCoupler::syncTimestepsWithPgfParallel()
 {
 	// Recv foamdt  first and broadcast;
 	if (!serialYade) {
@@ -642,47 +642,47 @@ void PgfCoupling::exchangeDeltaTParallel()
 
 		dataExchangeInterval = (long int)((yadeDt < foamDeltaT) ? foamDeltaT / yadeDt : 1);
 	} else {
-		exchangeDeltaT();
+		syncTimestepsWithPgf();
 	}
 }
 
-void PgfCoupling::runCoupling()
+void YadeToPgfMpiCoupler::exchangeParticleDataWithPgf()
 {
 	if (localRank > yadeMaster or serialYade) {
 		buildLocalIds();
 		buildSharedIdsMap();
-		sendIntersectionToFluidProcs();
-		sendBodyData();
-		verifyParticleDetection();
-		getParticleForce();
+		sendNumberOfOverlapingParticlesToPgfProcs();
+		sendParticleKinematicsToPgf();
+		verifyAllParticlesWereLocatedByPgf();
+		receiveLambdaDotFromPgf();
 	}
 }
 
-void PgfCoupling::action()
+void YadeToPgfMpiCoupler::action()
 {
 	if (!initDone) {
-		StartFoamSolver();
+		spawnPgfSolverViaMpi();
 	}
-	if (exchangeData()) {
-		resetFluidDomains();
-		runCoupling();
-		exchangeDeltaTParallel();
+	if (isCouplingTimestep()) {
+		clearFluidDomainParticleLists();
+		exchangeParticleDataWithPgf();
+		syncTimestepsWithPgfParallel();
 	}
-	setHydroForce();
+	applyLambdaDotToParticles();
 	// master keeps remote body copies but is excluded from the OpenFOAM
 	// exchange; mirror the worker-side lambdaDot onto them so its spheres shrink.
 	syncLambdaDotToMaster();
 }
 
-bool PgfCoupling::exchangeData() { return scene->iter % dataExchangeInterval == 0; }
+bool YadeToPgfMpiCoupler::isCouplingTimestep() { return scene->iter % dataExchangeInterval == 0; }
 
 
-void PgfCoupling::killMPI()
+void YadeToPgfMpiCoupler::killMPI()
 {
 	MPI_Abort(INTRACOMM, -100);
 }
 
-void PgfCoupling::checkFoamVersion()
+void YadeToPgfMpiCoupler::checkFoamVersion()
 {
 	const char* wmProjectDir = std::getenv("WM_PROJECT_DIR");
 	if (wmProjectDir != nullptr) {

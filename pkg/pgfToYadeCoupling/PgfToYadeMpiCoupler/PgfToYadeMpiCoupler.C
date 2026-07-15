@@ -1,18 +1,18 @@
 /*  Minimal OF-side YADE coupling for porousGasificationFoam.
- *  Derived from FoamYade.C (c) 2019 Deepak Kunhappan. See PgfYadeCoupling.H. */
+ *  Derived from FoamYade.C (c) 2019 Deepak Kunhappan. See PgfToYadeMpiCoupler.H. */
 
-#include "PgfYadeCoupling.H"
+#include "PgfToYadeMpiCoupler.H"
 #include "PstreamGlobals.H"
 #include <mpi.h>
 #include <string>
 
-void Foam::PgfYadeCoupling::printMsg(const std::string& msg)
+void Foam::PgfToYadeMpiCoupler::printMsg(const std::string& msg)
 {
 	std::cout << " Rank : " << worldRank << "  " << msg << std::endl;
 }
 
 
-void Foam::PgfYadeCoupling::InitializeCoupling()
+void Foam::PgfToYadeMpiCoupler::initializeMpiConnectionWithYade()
 {
 	if (!couplingIsInitialized) {
 		std::cout << "FOAM: Starting intialization (PGF coupling backend active) " << std::endl;
@@ -49,12 +49,12 @@ void Foam::PgfYadeCoupling::InitializeCoupling()
 			yadeProcs[0].numParticlesProc.resize(localCommSize);
 			std::fill(yadeProcs[0].numParticlesProc.begin(), yadeProcs[0].numParticlesProc.end(), -1);
 		}
-		sendMeshBbox();
+		sendMeshBoundingBoxToYade();
 	}
 }
 
 
-void Foam::PgfYadeCoupling::sendMeshBbox()
+void Foam::PgfToYadeMpiCoupler::sendMeshBoundingBoxToYade()
 {
 	//send mesh bbox from point field, min
 	if (!couplingIsInitialized) {
@@ -95,7 +95,7 @@ void Foam::PgfYadeCoupling::sendMeshBbox()
 }
 
 
-void Foam::PgfYadeCoupling::recvYadeIntrs()
+void Foam::PgfToYadeMpiCoupler::receiveParticleDataFromYadeProcs()
 {
 	for (auto& yProc : yadeProcs) {
 		MPI_Status status;
@@ -115,7 +115,7 @@ void Foam::PgfYadeCoupling::recvYadeIntrs()
 
 			std::fill(yProc.foundBuff.begin(), yProc.foundBuff.end(), -1);
 			std::fill(yProc.lambdaDotBuff.begin(), yProc.lambdaDotBuff.end(), 0.0);
-			inCommProcs.push_back(std::make_shared<PgfProc>(yProc)); // keep list of yadeProcs with intersection.
+			inCommProcs.push_back(std::make_shared<YadeProcToPgfCouplingPipeline>(yProc)); // keep list of yadeProcs with intersection.
 		}
 	}
 
@@ -129,7 +129,7 @@ void Foam::PgfYadeCoupling::recvYadeIntrs()
 }
 
 
-void Foam::PgfYadeCoupling::locateAllParticles()
+void Foam::PgfToYadeMpiCoupler::locateReceivedParticlesOnFluidMesh()
 {
 	for (const auto& yProc : inCommProcs) {
 		for (int np = 0; np != yProc->numParticles; ++np) {
@@ -141,7 +141,7 @@ void Foam::PgfYadeCoupling::locateAllParticles()
 			std::vector<int> cellIds = locatePt(pos);
 
 			if (cellIds.size() && cellIds[0] > -1) {
-				std::shared_ptr<PgfParticle> yParticle = std::make_shared<PgfParticle>();
+				std::shared_ptr<YadeParticleCoupledToPGF> yParticle = std::make_shared<YadeParticleCoupledToPGF>();
 				yProc->inComm                          = true;
 				yParticle->pos                         = pos;
 				yParticle->cellIds                     = cellIds;
@@ -211,7 +211,7 @@ void Foam::PgfYadeCoupling::locateAllParticles()
 	}
 }
 
-std::vector<int> Foam::PgfYadeCoupling::locatePt(const vector& pt)
+std::vector<int> Foam::PgfToYadeMpiCoupler::locatePt(const vector& pt)
 {
 	std::vector<int> cellId;
 	int              inCell = mesh.findCell(pt);
@@ -220,7 +220,7 @@ std::vector<int> Foam::PgfYadeCoupling::locatePt(const vector& pt)
 }
 
 
-void Foam::PgfYadeCoupling::sendLambdaDotToYade()
+void Foam::PgfToYadeMpiCoupler::sendLambdaDotToYadeProcs()
 {
 	// pack 1 double (lambdaDot) per found particle from its cell value
 	for (auto& yProc : inCommProcs) {
@@ -240,7 +240,7 @@ void Foam::PgfYadeCoupling::sendLambdaDotToYade()
 }
 
 
-void Foam::PgfYadeCoupling::exchangeDT()
+void Foam::PgfToYadeMpiCoupler::syncTimestepsWithYade()
 {
 	if (localRank == 0) {
 		MPI_Send(&deltaT, 1, MPI_DOUBLE, 0, TAG_FLUID_DT, interComm);
@@ -258,13 +258,7 @@ void Foam::PgfYadeCoupling::exchangeDT()
 }
 
 
-void Foam::PgfYadeCoupling::setSourceZero()
-{
-	clearInCommProcs();
-}
-
-
-void Foam::PgfYadeCoupling::clearInCommProcs()
+void Foam::PgfToYadeMpiCoupler::clearParticleExchangeBuffers()
 {
 	if (inCommProcs.size()) {
 		for (const auto& yp : inCommProcs) {
@@ -277,7 +271,7 @@ void Foam::PgfYadeCoupling::clearInCommProcs()
 }
 
 
-void Foam::PgfYadeCoupling::finalizeRun()
+void Foam::PgfToYadeMpiCoupler::finalizeRun()
 {
 	int value = -1;
 	MPI_Bcast(&value, 1, MPI_INT, 0, interComm);
@@ -286,11 +280,11 @@ void Foam::PgfYadeCoupling::finalizeRun()
 
 
 /* main driver */
-void Foam::PgfYadeCoupling::setParticleAction(double dt)
+void Foam::PgfToYadeMpiCoupler::exchangeParticleDataWithYade(double dt)
 {
 	deltaT = dt;
-	recvYadeIntrs();
-	locateAllParticles();
-	sendLambdaDotToYade();
-	exchangeDT();
+	receiveParticleDataFromYadeProcs();
+	locateReceivedParticlesOnFluidMesh();
+	sendLambdaDotToYadeProcs();
+	syncTimestepsWithYade();
 }

@@ -10,7 +10,7 @@
 //
 // FluidDomainBbox / Bo1_FluidDomainBbox_Aabb are NOT redefined here: they
 // are shared with the legacy coupling and come in via FoamCoupling.hpp
-// (registered once in FoamCoupling.cpp). Only PgfCoupling itself is a new
+// (registered once in FoamCoupling.cpp). Only YadeToPgfMpiCoupler itself is a new
 // registered serializable.
 #ifdef YADE_MPI
 
@@ -18,14 +18,14 @@
 
 // Brings in GlobalEngine, Body, Scene, Subdomain, Sphere, mpi.h and the
 // shared FluidDomainBbox / Bo1_FluidDomainBbox_Aabb shape classes.
-#include "FoamCoupling.hpp"
+#include <pkg/openfoam/FoamCoupling.hpp>
 
 namespace yade { // Cannot have #include directive inside.
 class Scene;
 class Subdomain;
 class Interaction;
 class BodyContainer;
-class PgfCoupling : public GlobalEngine {
+class YadeToPgfMpiCoupler : public GlobalEngine {
 private:
 	// some variables for MPI_Send/Recv
 	const int  sendTag = 500;
@@ -52,24 +52,24 @@ public:
 		void killMPI();
 		void updateProcList();
 		void resetProcList();
-		void exchangeDeltaT();
-		bool exchangeData();
+		void syncTimestepsWithPgf();
+		bool isCouplingTimestep();
         void castTerminate();
-		void getParticleForce();
-		void verifyParticleDetection();
+		void receiveLambdaDotFromPgf();
+		void verifyAllParticlesWereLocatedByPgf();
 		bool ifFluidDomain(const Body::id_t& );
 		int ifSharedId(const Body::id_t& );
 		bool checkSharedDomains(const int& );
 		int stride;
-		void resetFluidDomains();
-		void runCoupling();
-		void setHydroForce();
+		void clearFluidDomainParticleLists();
+		void exchangeParticleDataWithPgf();
+		void applyLambdaDotToParticles();
 		void syncLambdaDotToMaster();
-		void StartFoamSolver();
-		void SetFoamSolver(const std::string &solverName, unsigned numProcs);
+		void spawnPgfSolverViaMpi();
+		void SetPgfSolver(const std::string &solverName, unsigned numProcs);
 
 		void buildLocalIds();
-		void exchangeDeltaTParallel();
+		void syncTimestepsWithPgfParallel();
 		void insertBodyId(int);
 		bool eraseId(int);
 		int getNumBodies();
@@ -90,7 +90,7 @@ public:
 		}
 		PyObject* getMyComm() {	return PyMPIComm_New(*myComm_p);}
 		virtual void action() override;
-		virtual ~PgfCoupling(){};
+		virtual ~YadeToPgfMpiCoupler(){};
 
 		std::vector<int> bodyList;  // 'global' all Ids across all procs which are in coupling. Used in serial mode  coupling.
 		std::vector<std::pair<Body::id_t, std::vector<Body::id_t> > > sharedIds;
@@ -109,11 +109,11 @@ public:
 
 		long int  dataExchangeInterval=1;
 		bool recvdFoamDeltaT;
-		void getFluidDomainBbox();
+		void receiveMeshBoundingBoxesFromPgf();
 		void findIntersections();
 		bool ifDomainBodies(const shared_ptr<Body>& );
-		void sendBodyData();
-		void sendIntersectionToFluidProcs();
+		void sendParticleKinematicsToPgf();
+		void sendNumberOfOverlapingParticlesToPgfProcs();
 		int commSzdff;
 		int otherCommSz;
 		void buildSharedIdsMap();
@@ -121,7 +121,7 @@ public:
 		bool initDone = false;
 		void checkFoamVersion();
 
-    YADE_CLASS_BASE_DOC_ATTRS_INIT_CTOR_PY(PgfCoupling,GlobalEngine,
+    YADE_CLASS_BASE_DOC_ATTRS_INIT_CTOR_PY(YadeToPgfMpiCoupler,GlobalEngine,
    "A minimal engine for coupling Yade with porousGasificationFoam. Exchanges "
    "particle positions/velocities/radii (YADE->OF) and a per-particle lambdaDot "
    "shrink factor (OF->YADE). No drag, no lift, no torques -- the fluid does not "
@@ -137,24 +137,24 @@ public:
     ,
     checkFoamVersion();
     ,
-    .def("setIdList", &PgfCoupling::setIdList,boost::python::arg("bodyIdlist"), "list of body ids in coupling. (links to :yref: `PgfCoupling::bodyList` vector, used to build particle data sent to foam: pos, vel, radius.)")
-    .def("killMPI", &PgfCoupling::killMPI, "Destroy MPI, to be called at the end of the simulation, from :yref:`killMPI<PgfCoupling::killMPI>`")
-    .def("setNumParticles",&PgfCoupling::setNumParticles,boost::python::arg("numparticles"),"number of particles in coupling")
-    .def("insertBodyId", &PgfCoupling::insertBodyId,boost::python::arg("newId"), "insert a new body id for coupling")
-    .def("eraseId", &PgfCoupling::eraseId,boost::python::arg("idToErase"), "remove a body from coupling")
-    .def("getNumBodies", &PgfCoupling::getNumBodies, "get the number of bodies in the coupling")
-    .def("getIdList", &PgfCoupling::getIdList, "get the ids of bodies in coupling")
-    .def("getFluidDomainBbox", &PgfCoupling::getFluidDomainBbox, "get the fluid domain bounding boxes, called once during simulation initialization. ")
-	.def("SetOpenFoamSolver", &PgfCoupling::SetFoamSolver,(boost::python::arg("OpenFOAMSolverName"), boost::python::arg("numOpenFOAMProcesses")),"Starts the Yade coupled OpenFOAM solver with the requested number of processes")
-	.def("StartFoamSolver",&PgfCoupling::StartFoamSolver,"Starts the OpenFOAM solver")
+    .def("setIdList", &YadeToPgfMpiCoupler::setIdList,boost::python::arg("bodyIdlist"), "list of body ids in coupling. (links to :yref: `YadeToPgfMpiCoupler::bodyList` vector, used to build particle data sent to foam: pos, vel, radius.)")
+    .def("killMPI", &YadeToPgfMpiCoupler::killMPI, "Destroy MPI, to be called at the end of the simulation, from :yref:`killMPI<YadeToPgfMpiCoupler::killMPI>`")
+    .def("setNumParticles",&YadeToPgfMpiCoupler::setNumParticles,boost::python::arg("numparticles"),"number of particles in coupling")
+    .def("insertBodyId", &YadeToPgfMpiCoupler::insertBodyId,boost::python::arg("newId"), "insert a new body id for coupling")
+    .def("eraseId", &YadeToPgfMpiCoupler::eraseId,boost::python::arg("idToErase"), "remove a body from coupling")
+    .def("getNumBodies", &YadeToPgfMpiCoupler::getNumBodies, "get the number of bodies in the coupling")
+    .def("getIdList", &YadeToPgfMpiCoupler::getIdList, "get the ids of bodies in coupling")
+    .def("receiveMeshBoundingBoxesFromPgf", &YadeToPgfMpiCoupler::receiveMeshBoundingBoxesFromPgf, "get the fluid domain bounding boxes, called once during simulation initialization. ")
+	.def("SetPgfSolver", &YadeToPgfMpiCoupler::SetPgfSolver,(boost::python::arg("pgfSolverName"), boost::python::arg("numPgfProcesses")),"Sets the PGF (OpenFOAM) solver to spawn and the requested number of processes")
+	.def("spawnPgfSolverViaMpi",&YadeToPgfMpiCoupler::spawnPgfSolverViaMpi,"Spawns the PGF (OpenFOAM) solver processes via MPI_Comm_spawn")
 
-    .def_readonly("foamDeltaT", &PgfCoupling::foamDeltaT, "timestep in openfoam solver from  :yref:`exchangeDeltaT <PgfCoupling::exchangeDeltaT>` ")
-    .def_readonly("dataExchangeInterval", &PgfCoupling::dataExchangeInterval, "Number of iterations/substepping : for stability and to be in sync with fluid solver calculated in :yref:`exchangeDeltaT <PgfCoupling::exchangeDeltaT>`")
-    .add_property("comm",&PgfCoupling::getMyComm,&PgfCoupling::setMyComm,"Communicator to be used for MPI (converts mpi4py comm <-> c++ comm)")
+    .def_readonly("foamDeltaT", &YadeToPgfMpiCoupler::foamDeltaT, "timestep in openfoam solver from  :yref:`syncTimestepsWithPgf <YadeToPgfMpiCoupler::syncTimestepsWithPgf>` ")
+    .def_readonly("dataExchangeInterval", &YadeToPgfMpiCoupler::dataExchangeInterval, "Number of iterations/substepping : for stability and to be in sync with fluid solver calculated in :yref:`syncTimestepsWithPgf <YadeToPgfMpiCoupler::syncTimestepsWithPgf>`")
+    .add_property("comm",&YadeToPgfMpiCoupler::getMyComm,&YadeToPgfMpiCoupler::setMyComm,"Communicator to be used for MPI (converts mpi4py comm <-> c++ comm)")
     )
 	// clang-format on
 	DECLARE_LOGGER;
 };
-REGISTER_SERIALIZABLE(PgfCoupling);
+REGISTER_SERIALIZABLE(YadeToPgfMpiCoupler);
 } // namespace yade
 #endif

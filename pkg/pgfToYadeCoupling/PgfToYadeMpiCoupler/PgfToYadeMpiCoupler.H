@@ -9,8 +9,8 @@
  *  mesh.findCell() directly.
  */
 
-#ifndef PgfYadeCoupling_H
-#define PgfYadeCoupling_H
+#ifndef PgfToYadeMpiCoupler_H
+#define PgfToYadeMpiCoupler_H
 
 #include <algorithm>
 #include <map>
@@ -25,9 +25,9 @@
 
 namespace Foam {
 
-class PgfParticle {
+class YadeParticleCoupledToPGF {
 public:
-	PgfParticle() {};
+	YadeParticleCoupledToPGF() {};
 	double           dia;
 	scalar           lambdaDot = 0.0;
 	point            pos;
@@ -35,24 +35,24 @@ public:
 	std::vector<int> cellIds;
 	label            inCell;
 	int              indx;
-	virtual ~PgfParticle() {};
+	virtual ~YadeParticleCoupledToPGF() {};
 };
 
-class PgfProc {
+class YadeProcToPgfCouplingPipeline {
 public:
-	PgfProc() {};
+	YadeProcToPgfCouplingPipeline() {};
 	int                                       yRank;            // world rank of the yade Proc.
 	std::vector<int>                          numParticlesProc; // number of particles from intersections with yade proc
 	bool                                      inComm = false;   // flag for intersection with this proc.
 	std::vector<double>                       particleDataBuff; // buff to recv particle info: 7 doubles/particle (pos[3], vel[3], radius[1])
 	std::vector<int>                          foundBuff;        // buff to send grid search results
 	std::vector<double>                       lambdaDotBuff;    // buff to send lambdaDot: 1 double/particle
-	std::vector<std::shared_ptr<PgfParticle>> foundParticles;   // vector of found particles from this yadeProc.
-	int                                       numParticles;
-	~PgfProc() {};
+	std::vector<std::shared_ptr<YadeParticleCoupledToPGF>> foundParticles; // vector of found particles from this yadeProc.
+	int                                                    numParticles;
+	~YadeProcToPgfCouplingPipeline() {};
 };
 
-class PgfYadeCoupling {
+class PgfToYadeMpiCoupler {
 protected:
 	/* tags for MPI messages -- same integers as the legacy coupling; the two
 	   backends are never active simultaneously in the same run. */
@@ -80,30 +80,29 @@ public:
 
 	scalar                                deltaT;
 	double                                yadeDT;
-	std::vector<PgfProc>                  yadeProcs;
-	std::vector<std::shared_ptr<PgfProc>> inCommProcs;
+	std::vector<YadeProcToPgfCouplingPipeline>                  yadeProcs;
+	std::vector<std::shared_ptr<YadeProcToPgfCouplingPipeline>> inCommProcs;
 
-	PgfYadeCoupling(const fvMesh& _mesh, volScalarField& _lambdaDot)
+	PgfToYadeMpiCoupler(const fvMesh& _mesh, volScalarField& _lambdaDot)
 	        : mesh(_mesh)
 	        , lambdaDot(_lambdaDot)
 	{
-		InitializeCoupling();
+		initializeMpiConnectionWithYade();
 	}
 
-	void             InitializeCoupling();
-	void             sendMeshBbox();
-	void             recvYadeIntrs();
-	void             locateAllParticles();
+	void             initializeMpiConnectionWithYade();
+	void             sendMeshBoundingBoxToYade();
+	void             receiveParticleDataFromYadeProcs();
+	void             locateReceivedParticlesOnFluidMesh();
 	std::vector<int> locatePt(const vector& pt);
-	void             sendLambdaDotToYade();
-	void             exchangeDT();
-	void             setParticleAction(double dt);
-	void             setSourceZero();
-	void             clearInCommProcs();
+	void             sendLambdaDotToYadeProcs();
+	void             syncTimestepsWithYade();
+	void             exchangeParticleDataWithYade(double dt);
+	void             clearParticleExchangeBuffers();
 	void             finalizeRun();
 	void             printMsg(const std::string& msg);
 
-	virtual ~PgfYadeCoupling() {};
+	virtual ~PgfToYadeMpiCoupler() {};
 };
 
 } // namespace Foam

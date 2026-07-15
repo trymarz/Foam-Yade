@@ -70,9 +70,9 @@ os.chdir(rootDir + '/FoamYade')
 os.system('wclean')
 os.system('wmake')
 
-# PgfYade coupling (minimal PGF-native OF-side coupling, libPgfYadeCoupling.so)
-print("Compiling PgfYade-OpenFOAM coupling module")
-os.chdir(rootDir + '/PgfYade')
+# PgfToYadeMpiCoupler (minimal PGF-native OF-side coupling, libPgfToYadeMpiCoupler.so)
+print("Compiling PgfToYadeMpiCoupler OpenFOAM coupling module")
+os.chdir(rootDir + '/../../pgfToYadeCoupling/PgfToYadeMpiCoupler')
 os.system('wclean')
 os.system('wmake')
 
