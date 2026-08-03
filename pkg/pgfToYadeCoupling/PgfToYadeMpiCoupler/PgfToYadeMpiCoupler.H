@@ -76,7 +76,7 @@ public:
 	bool                                  couplingIsInitialized = false;
 	const fvMesh&                         mesh;
 	volScalarField&                       lambdaDot;
-	bool                                  serialYade;
+	bool                                  serialYade = false;
 
 	scalar                                deltaT;
 	double                                yadeDT;

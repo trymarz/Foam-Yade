@@ -32,6 +32,9 @@ void Foam::PgfToYadeMpiCoupler::initializeMpiConnectionWithYade()
 		commSzDff             = abs(worldCommSize - localCommSize);
 		couplingIsInitialized = true;
 
+		std::cout << "[DEBUG][OF rank " << localRank << "] initializeMpiConnectionWithYade: localCommSize=" << localCommSize
+		          << " worldCommSize=" << worldCommSize << " commSzDff=" << commSzDff << std::endl;
+
 		if (commSzDff == 1) { serialYade = true; }
 
 		if (!serialYade) {
@@ -98,8 +101,11 @@ void Foam::PgfToYadeMpiCoupler::sendMeshBoundingBoxToYade()
 void Foam::PgfToYadeMpiCoupler::receiveParticleDataFromYadeProcs()
 {
 	for (auto& yProc : yadeProcs) {
+		std::cout << "[DEBUG][OF rank " << localRank << "] recv TAG_SZ_BUFF from yRank=" << yProc.yRank << " ..." << std::endl;
 		MPI_Status status;
 		MPI_Recv(&yProc.numParticlesProc.front(), localCommSize, MPI_INT, yProc.yRank, TAG_SZ_BUFF, interComm, &status);
+		std::cout << "[DEBUG][OF rank " << localRank << "] got TAG_SZ_BUFF from yRank=" << yProc.yRank
+		          << " numParticlesProc[localRank]=" << yProc.numParticlesProc[localRank] << std::endl;
 	}
 
 	// those yade procs intersecting current grid.
@@ -122,9 +128,12 @@ void Foam::PgfToYadeMpiCoupler::receiveParticleDataFromYadeProcs()
 
 	// get the data from intersecting procs.
 	for (auto& yProc : inCommProcs) {
+		std::cout << "[DEBUG][OF rank " << localRank << "] recv TAG_YADE_DATA from yRank=" << yProc->yRank
+		          << " sz=" << yProc->particleDataBuff.size() << " ..." << std::endl;
 		MPI_Status           status;
 		std::vector<double>& dBuff = yProc->particleDataBuff;
 		MPI_Recv(&dBuff.front(), (int)dBuff.size(), MPI_DOUBLE, yProc->yRank, TAG_YADE_DATA, interComm, &status);
+		std::cout << "[DEBUG][OF rank " << localRank << "] got TAG_YADE_DATA from yRank=" << yProc->yRank << std::endl;
 	}
 }
 
@@ -164,9 +173,11 @@ void Foam::PgfToYadeMpiCoupler::locateReceivedParticlesOnFluidMesh()
 
 	// send the 'foundBuff' of intersecting procs to Yade.
 	for (const auto& yProc : inCommProcs) {
+		std::cout << "[DEBUG][OF rank " << localRank << "] send TAG_SEARCH_RES to yRank=" << yProc->yRank << " ..." << std::endl;
 		std::vector<int>& fBuff = yProc->foundBuff;
 		int               sz    = int(fBuff.size());
 		MPI_Send(&fBuff.front(), sz, MPI_INT, yProc->yRank, TAG_SEARCH_RES, interComm);
+		std::cout << "[DEBUG][OF rank " << localRank << "] sent TAG_SEARCH_RES to yRank=" << yProc->yRank << std::endl;
 	}
 
 	//recv info of 'shared particles'.
@@ -176,9 +187,11 @@ void Foam::PgfToYadeMpiCoupler::locateReceivedParticlesOnFluidMesh()
 
 	int n = 0;
 	for (const auto& yProc : inCommProcs) {
+		std::cout << "[DEBUG][OF rank " << localRank << "] recv TAG_SHARED_ID (count) from yRank=" << yProc->yRank << " ..." << std::endl;
 		int&       ncount = sharedCount[n];
 		MPI_Status stat;
 		MPI_Recv(&ncount, 1, MPI_INT, yProc->yRank, TAG_SHARED_ID, interComm, &stat);
+		std::cout << "[DEBUG][OF rank " << localRank << "] got TAG_SHARED_ID count=" << ncount << " from yRank=" << yProc->yRank << std::endl;
 		if (ncount > 0) rnks.push_back(n);
 		++n;
 	}
@@ -235,23 +248,31 @@ void Foam::PgfToYadeMpiCoupler::sendLambdaDotToYadeProcs()
 
 	// send full buffer (numParticles doubles) to each intersecting yade proc
 	for (auto& yProc : inCommProcs) {
+		std::cout << "[DEBUG][OF rank " << localRank << "] send TAG_LAMBDA to yRank=" << yProc->yRank << " ..." << std::endl;
 		MPI_Send(&yProc->lambdaDotBuff.front(), yProc->numParticles, MPI_DOUBLE, yProc->yRank, TAG_LAMBDA, interComm);
+		std::cout << "[DEBUG][OF rank " << localRank << "] sent TAG_LAMBDA to yRank=" << yProc->yRank << std::endl;
 	}
 }
 
 
 void Foam::PgfToYadeMpiCoupler::syncTimestepsWithYade()
 {
+	std::cout << "[DEBUG][OF rank " << localRank << "] syncTimestepsWithYade: serialYade=" << serialYade << " ..." << std::endl;
 	if (localRank == 0) {
 		MPI_Send(&deltaT, 1, MPI_DOUBLE, 0, TAG_FLUID_DT, interComm);
+		std::cout << "[DEBUG][OF rank " << localRank << "] sent TAG_FLUID_DT" << std::endl;
 	}
 	if (!serialYade) {
 		if (localRank == 0) {
+			std::cout << "[DEBUG][OF rank " << localRank << "] recv TAG_YADE_DT ..." << std::endl;
 			MPI_Status status;
 			MPI_Recv(&yadeDT, 1, MPI_DOUBLE, 0, TAG_YADE_DT, interComm, &status);
+			std::cout << "[DEBUG][OF rank " << localRank << "] got TAG_YADE_DT=" << yadeDT << std::endl;
 		}
 		// broadcast recvd yadeDt from localRank = 0.
+		std::cout << "[DEBUG][OF rank " << localRank << "] bcast yadeDT on local comm ..." << std::endl;
 		MPI_Bcast(&yadeDT, 1, MPI_DOUBLE, 0, PstreamGlobals::MPICommunicators_[0]);
+		std::cout << "[DEBUG][OF rank " << localRank << "] bcast yadeDT done" << std::endl;
 	} else {
 		MPI_Bcast(&yadeDT, 1, MPI_DOUBLE, 0, interComm);
 	}
@@ -283,8 +304,13 @@ void Foam::PgfToYadeMpiCoupler::finalizeRun()
 void Foam::PgfToYadeMpiCoupler::exchangeParticleDataWithYade(double dt)
 {
 	deltaT = dt;
+	std::cout << "[DEBUG][OF rank " << localRank << "] exchangeParticleDataWithYade: START dt=" << dt << std::endl;
 	receiveParticleDataFromYadeProcs();
+	std::cout << "[DEBUG][OF rank " << localRank << "] exchangeParticleDataWithYade: receiveParticleDataFromYadeProcs DONE" << std::endl;
 	locateReceivedParticlesOnFluidMesh();
+	std::cout << "[DEBUG][OF rank " << localRank << "] exchangeParticleDataWithYade: locateReceivedParticlesOnFluidMesh DONE" << std::endl;
 	sendLambdaDotToYadeProcs();
+	std::cout << "[DEBUG][OF rank " << localRank << "] exchangeParticleDataWithYade: sendLambdaDotToYadeProcs DONE" << std::endl;
 	syncTimestepsWithYade();
+	std::cout << "[DEBUG][OF rank " << localRank << "] exchangeParticleDataWithYade: END" << std::endl;
 }

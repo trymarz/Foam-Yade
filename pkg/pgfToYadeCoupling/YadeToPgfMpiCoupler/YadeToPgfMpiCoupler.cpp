@@ -68,6 +68,9 @@ void YadeToPgfMpiCoupler::spawnPgfSolverViaMpi()
 
 	MPI_Comm_remote_size(FOAMCOMM, &foamCommSize);
 
+	std::cout << "[DEBUG][Yade rank " << localRank << "] spawnPgfSolverViaMpi: localCommSize=" << localCommSize
+	          << " worldCommSize=" << worldCommSize << " foamCommSize=" << foamCommSize << " numFoamProcs=" << numFoamProcs << std::endl;
+
 	// sanity check of the FOAMCOMM and numFoamProcs
 	if (localRank == 0) {
 		assert(foamCommSize == numFoamProcs && "possible MPI error, difference in FoamCommunicator size and number of OpenFOAM processes.");
@@ -306,7 +309,9 @@ void YadeToPgfMpiCoupler::sendNumberOfOverlapingParticlesToPgfProcs()
 
 
 	for (int rnk = 0; rnk != foamCommSize; ++rnk) {
+		std::cout << "[DEBUG][Yade rank " << localRank << "] send TAG_SZ_BUFF to ofRank=" << (rnk + stride) << " ..." << std::endl;
 		MPI_Send(&sendRecvRanks.front(), buffSz, MPI_INT, rnk + stride, TAG_SZ_BUFF, INTRACOMM);
+		std::cout << "[DEBUG][Yade rank " << localRank << "] sent TAG_SZ_BUFF to ofRank=" << (rnk + stride) << std::endl;
 	}
 }
 
@@ -344,7 +349,13 @@ void YadeToPgfMpiCoupler::sendParticleKinematicsToPgf()
 					prtData[7 * i + 6]            = sph->radius;
 				}
 				int sz = prtData.size();
+				std::cout << "[DEBUG][Yade rank " << localRank << "] send TAG_PRT_DATA (" << flbox->bIds.size()
+				          << " particles) to ofRank=" << flbox->domainRank << " ..." << std::endl;
 				MPI_Send(&prtData.front(), sz, MPI_DOUBLE, flbox->domainRank, TAG_PRT_DATA, INTRACOMM);
+				std::cout << "[DEBUG][Yade rank " << localRank << "] sent TAG_PRT_DATA to ofRank=" << flbox->domainRank << std::endl;
+			} else {
+				std::cout << "[DEBUG][Yade rank " << localRank << "] no intersection with ofRank=" << flbox->domainRank
+				          << ", skipping TAG_PRT_DATA send" << std::endl;
 			}
 		}
 	}
@@ -372,7 +383,9 @@ void YadeToPgfMpiCoupler::verifyAllParticlesWereLocatedByPgf()
 		std::vector<int>& vt  = it.second;
 		int               rnk = it.first;
 		int buffSz = vt.size();
+		std::cout << "[DEBUG][Yade rank " << localRank << "] recv TAG_SEARCH_RES from ofRank=" << rnk << " sz=" << buffSz << " ..." << std::endl;
 		MPI_Recv(&vt.front(), buffSz, MPI_INT, rnk, TAG_SEARCH_RES, INTRACOMM, &status);
+		std::cout << "[DEBUG][Yade rank " << localRank << "] got TAG_SEARCH_RES from ofRank=" << rnk << std::endl;
 	}
 
 
@@ -517,7 +530,9 @@ void YadeToPgfMpiCoupler::receiveLambdaDotFromPgf()
 		int                  recvRank = recvForce.first;
 		int                  buffSz   = tmpForce.size();
 
+		std::cout << "[DEBUG][Yade rank " << localRank << "] recv TAG_FORCE from ofRank=" << recvRank << " sz=" << buffSz << " ..." << std::endl;
 		MPI_Recv(&tmpForce.front(), buffSz, MPI_DOUBLE, recvRank, TAG_FORCE, INTRACOMM, &status);
+		std::cout << "[DEBUG][Yade rank " << localRank << "] got TAG_FORCE from ofRank=" << recvRank << std::endl;
 	}
 }
 
@@ -649,12 +664,19 @@ void YadeToPgfMpiCoupler::syncTimestepsWithPgfParallel()
 void YadeToPgfMpiCoupler::exchangeParticleDataWithPgf()
 {
 	if (localRank > yadeMaster or serialYade) {
+		std::cout << "[DEBUG][Yade rank " << localRank << "] exchange: START" << std::endl;
 		buildLocalIds();
+		std::cout << "[DEBUG][Yade rank " << localRank << "] exchange: buildLocalIds DONE nLocalIds=" << localIds.size() << std::endl;
 		buildSharedIdsMap();
+		std::cout << "[DEBUG][Yade rank " << localRank << "] exchange: buildSharedIdsMap DONE" << std::endl;
 		sendNumberOfOverlapingParticlesToPgfProcs();
+		std::cout << "[DEBUG][Yade rank " << localRank << "] exchange: sendNumberOfOverlapingParticlesToPgfProcs DONE" << std::endl;
 		sendParticleKinematicsToPgf();
+		std::cout << "[DEBUG][Yade rank " << localRank << "] exchange: sendParticleKinematicsToPgf DONE" << std::endl;
 		verifyAllParticlesWereLocatedByPgf();
+		std::cout << "[DEBUG][Yade rank " << localRank << "] exchange: verifyAllParticlesWereLocatedByPgf DONE" << std::endl;
 		receiveLambdaDotFromPgf();
+		std::cout << "[DEBUG][Yade rank " << localRank << "] exchange: receiveLambdaDotFromPgf DONE" << std::endl;
 	}
 }
 
@@ -663,10 +685,14 @@ void YadeToPgfMpiCoupler::action()
 	if (!initDone) {
 		spawnPgfSolverViaMpi();
 	}
+	std::cout << "[DEBUG][Yade rank " << localRank << "] action: iter=" << scene->iter
+	          << " isCouplingTimestep=" << isCouplingTimestep() << " dataExchangeInterval=" << dataExchangeInterval << std::endl;
 	if (isCouplingTimestep()) {
 		clearFluidDomainParticleLists();
 		exchangeParticleDataWithPgf();
+		std::cout << "[DEBUG][Yade rank " << localRank << "] action: before syncTimestepsWithPgfParallel" << std::endl;
 		syncTimestepsWithPgfParallel();
+		std::cout << "[DEBUG][Yade rank " << localRank << "] action: syncTimestepsWithPgfParallel DONE" << std::endl;
 	}
 	applyLambdaDotToParticles();
 	// master keeps remote body copies but is excluded from the OpenFOAM
