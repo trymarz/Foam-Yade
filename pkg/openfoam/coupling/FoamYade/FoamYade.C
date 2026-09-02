@@ -138,8 +138,12 @@ void Foam::FoamYade::recvYadeIntrs(){
 	for (auto& yProc : yadeProcs) {
 		if (yProc.numParticlesProc[localRank] > 0 ){
 			yProc.numParticles = yProc.numParticlesProc[localRank];
+			// Stride 11 = pos[3], vel[3], angVel[3], radius[1], lambda[1].
+			// Must match FoamCoupling::sendBodyData()'s pack stride on the Yade
+			// side; there is no layout negotiation over MPI, so both binaries
+			// have to come from matching source revisions.
 			if (!fibreCpl) {
-				yProc.particleDataBuff.resize(yProc.numParticles*10);
+				yProc.particleDataBuff.resize(yProc.numParticles*11);
 			}
 			else {
 				yProc.particleDataBuff.resize(yProc.numParticles*15);
@@ -169,7 +173,7 @@ void Foam::FoamYade::recvYadeIntrs(){
 void Foam::FoamYade::allocArrays(int sz, const std::shared_ptr<YadeProc>& yProc){
 	yProc->particleDataBuff.clear(); yProc->hydroForceBuff.clear();
 	if (!fibreCpl) {
-		yProc->particleDataBuff.resize(sz*10);
+		yProc->particleDataBuff.resize(sz*11);  // stride 11, see recvYadeIntrs()
 	} else {
 		yProc->particleDataBuff.resize(sz*15);
 	}
@@ -184,9 +188,9 @@ void Foam::FoamYade::locateAllParticles(){
 		for (int np = 0; np != yProc->numParticles; ++np) {
 			vector pos(0,0,0);
 			if (!fibreCpl){
-				pos.x() = yProc->particleDataBuff[np*10];
-				pos.y() = yProc->particleDataBuff[np*10+1];
-				pos.z() = yProc->particleDataBuff[np*10+2];
+				pos.x() = yProc->particleDataBuff[np*11];
+				pos.y() = yProc->particleDataBuff[np*11+1];
+				pos.z() = yProc->particleDataBuff[np*11+2];
 
 			} else {
 				pos.x() = yProc->particleDataBuff[np*15];
@@ -203,15 +207,19 @@ void Foam::FoamYade::locateAllParticles(){
 				yParticle->cellIds = cellIds; yParticle->inCell = cellIds[0];
 				yParticle->indx = np; // keep track of 'found particle' index
 
-				yParticle->linearVelocity.x() = yProc->particleDataBuff[np*10+3];
-				yParticle->linearVelocity.y() = yProc->particleDataBuff[np*10+4];
-				yParticle->linearVelocity.z() = yProc->particleDataBuff[np*10+5];
+				yParticle->linearVelocity.x() = yProc->particleDataBuff[np*11+3];
+				yParticle->linearVelocity.y() = yProc->particleDataBuff[np*11+4];
+				yParticle->linearVelocity.z() = yProc->particleDataBuff[np*11+5];
 
-				yParticle->rotationalVelocity.x() = yProc->particleDataBuff[np*10+6];
-				yParticle->rotationalVelocity.y() = yProc->particleDataBuff[np*10+7];
-				yParticle->rotationalVelocity.z() = yProc->particleDataBuff[np*10+8];
+				yParticle->rotationalVelocity.x() = yProc->particleDataBuff[np*11+6];
+				yParticle->rotationalVelocity.y() = yProc->particleDataBuff[np*11+7];
+				yParticle->rotationalVelocity.z() = yProc->particleDataBuff[np*11+8];
 
-				yParticle->dia = 2*yProc->particleDataBuff[np*10+9];
+				yParticle->dia = 2*yProc->particleDataBuff[np*11+9];
+
+				// Integrated lambda coming back from Yade's State::lambda_.
+				yParticle->lambda = yProc->particleDataBuff[np*11+10];
+
 				yParticle->calcPartVol();
 				yParticle->indx = np;
 

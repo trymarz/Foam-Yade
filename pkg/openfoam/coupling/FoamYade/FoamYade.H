@@ -44,6 +44,12 @@ public:
 	YadeParticle() {};
 	double                              dia;
 	scalar                              lambdaDot = 0;
+	// Integrated particle length scale [m], received from Yade's
+	// State::lambda_ (Yade integrates it from lambdaDot every DEM step and
+	// sends it back through the particle-data buffer). The 1.0 default matches
+	// Yade's own, so an unset particle reads as an unstretched spring rather
+	// than as zero size.
+	scalar                              lambda    = 1.0;
 	bool                                isFib = false;
 	double                              vol;
 	point                               pos;

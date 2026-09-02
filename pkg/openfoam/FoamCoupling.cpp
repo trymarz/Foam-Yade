@@ -346,36 +346,46 @@ void FoamCoupling::sendIntersectionToFluidProcs()
 
 void FoamCoupling::sendBodyData()
 {
-	/* send the particle data to the associated fluid procs. prtData -> pos, vel, angvel, raidus (for sphere), if fiber -> ori  */
+	/* send the particle data to the associated fluid procs. prtData -> pos, vel, angvel, radius (for sphere), lambda, if fiber -> ori
+	 * Stride is 11 doubles per particle. It must match the unpack stride in the
+	 * OpenFOAM-side FoamYade::locateAllParticles()/allocArrays(): there is no
+	 * buffer-layout negotiation over MPI (the only handshake is the particle
+	 * count), so both binaries have to be built from matching revisions. */
 	bool isPeriodic = scene->isPeriodic;
 	for (int f = 0; f != static_cast<int>(fluidDomains.size()); ++f) {
 		const shared_ptr<Body>& flbody = (*scene->bodies)[fluidDomains[f]];
 		if (flbody) {
 			const shared_ptr<FluidDomainBbox> flbox = YADE_PTR_CAST<FluidDomainBbox>(flbody->shape);
 			if (flbox->hasIntersection) {
-				std::vector<double> prtData(10 * flbox->bIds.size(), 1e-50);
+				std::vector<double> prtData(11 * flbox->bIds.size(), 1e-50);
 				for (unsigned int i = 0; i != flbox->bIds.size(); ++i) {
 					const shared_ptr<Body>& b = (*scene->bodies)[flbox->bIds[i]];
 					if (isPeriodic) {
 						const Vector3r& pos = scene->cell->wrapPt(b->state->pos);
-						prtData[10 * i]     = pos[0];
-						prtData[10 * i + 1] = pos[1];
-						prtData[10 * i + 2] = pos[2];
+						prtData[11 * i]     = pos[0];
+						prtData[11 * i + 1] = pos[1];
+						prtData[11 * i + 2] = pos[2];
 
 					} else {
-						prtData[10 * i]     = b->state->pos[0];
-						prtData[10 * i + 1] = b->state->pos[1];
-						prtData[10 * i + 2] = b->state->pos[2];
+						prtData[11 * i]     = b->state->pos[0];
+						prtData[11 * i + 1] = b->state->pos[1];
+						prtData[11 * i + 2] = b->state->pos[2];
 					}
-					prtData[10 * i + 3] = b->state->vel[0];
-					prtData[10 * i + 4] = b->state->vel[1];
-					prtData[10 * i + 5] = b->state->vel[2];
-					prtData[10 * i + 6] = b->state->angVel[0];
-					prtData[10 * i + 7] = b->state->angVel[1];
-					prtData[10 * i + 8] = b->state->angVel[2];
+					prtData[11 * i + 3] = b->state->vel[0];
+					prtData[11 * i + 4] = b->state->vel[1];
+					prtData[11 * i + 5] = b->state->vel[2];
+					prtData[11 * i + 6] = b->state->angVel[0];
+					prtData[11 * i + 7] = b->state->angVel[1];
+					prtData[11 * i + 8] = b->state->angVel[2];
 
 					const shared_ptr<Sphere>& sph = YADE_PTR_CAST<Sphere>(b->shape);
-					prtData[10 * i + 9]           = sph->radius;
+					prtData[11 * i + 9]           = sph->radius;
+
+					// Reverse (Yade -> OpenFOAM) channel for the integrated
+					// particle length scale, the counterpart of the lambdaDot
+					// arriving through hydroForceBuff. OpenFOAM interpolates it
+					// onto the mesh as the lambda field.
+					prtData[11 * i + 10] = b->state->lambda_;
 				}
 				int sz = prtData.size();
 				MPI_Send(&prtData.front(), sz, MPI_DOUBLE, flbox->domainRank, TAG_PRT_DATA, INTRACOMM);
