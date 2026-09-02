@@ -657,7 +657,8 @@ void FoamCoupling::setHydroForce()
 			tx[1] = forceVec[base + 4];
 			tx[2] = forceVec[base + 5];
 
-			// lambdaDot
+			// lambdaDot: rate of change of lambda [m/s], the forward counterpart
+			// of the lambda_ sent back in sendBodyData()
 			double lambdaDot = forceVec[base + 6];
 
 			// assign inside YADE body state
