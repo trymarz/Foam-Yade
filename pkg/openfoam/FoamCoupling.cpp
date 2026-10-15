@@ -3,6 +3,8 @@
 #ifdef YADE_MPI
 
 #include "FoamCoupling.hpp"
+#include <stdexcept>
+#include <unordered_set>
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpragmas"
 #pragma GCC diagnostic ignored "-Wsuggest-override"
@@ -186,6 +188,20 @@ void FoamCoupling::getFluidDomainBbox()
 		// MPI_Status status;
 		std::vector<double>& buff = minMaxBuff[rnk];
 		MPI_Recv(&buff.front(), 6, MPI_DOUBLE, rnk + stride, TAG_GRID_BBOX, INTRACOMM, &status);
+	}
+
+	// One-time handshake: every OpenFOAM rank states the lambda mode; they must agree.
+	for (int rnk = 0; rnk != foamCommSize; ++rnk) {
+		int mode = 0;
+		MPI_Recv(&mode, 1, MPI_INT, rnk + stride, TAG_LAMBDA_MODE, INTRACOMM, &status);
+		if (rnk == 0) {
+			lambdaMode = mode;
+		} else if (mode != lambdaMode) {
+			throw std::runtime_error("FoamCoupling: OpenFOAM ranks disagree on lambdaMode");
+		}
+	}
+	if (lambdaMode != 0 && lambdaMode != 1) {
+		throw std::runtime_error("FoamCoupling: unknown lambdaMode received from OpenFOAM");
 	}
 
 	//
@@ -598,6 +614,26 @@ void FoamCoupling::getParticleForce()
 }
 
 
+void FoamCoupling::applyLambdaFactor()
+{
+	if (lambdaMode != 1) return;
+	if (localRank == yadeMaster and not serialYade) return;
+
+	// A body listed by several fluid domains is multiplied once, by the first.
+	std::unordered_set<Body::id_t> applied;
+	for (const auto& rf : hForce) {
+		int                                indx     = abs(rf.first - localCommSize);
+		const std::vector<double>&         forceVec = rf.second;
+		const shared_ptr<FluidDomainBbox>& flbox    = YADE_PTR_CAST<FluidDomainBbox>((*scene->bodies)[fluidDomains[indx]]->shape);
+		for (unsigned int i = 0; i != flbox->bIds.size(); ++i) {
+			const Body::id_t id = flbox->bIds[i];
+			const double     r  = forceVec[7 * i + 6];
+			if (r <= 0 or not applied.insert(id).second) continue;
+			Body::byId(id, scene)->state->lambda_ *= r;
+		}
+	}
+}
+
 void FoamCoupling::resetFluidDomains()
 {
 	// clear the vector ids held fluidDomainBbox->bIds
@@ -657,13 +693,10 @@ void FoamCoupling::setHydroForce()
 			tx[1] = forceVec[base + 4];
 			tx[2] = forceVec[base + 5];
 
-			// lambdaDot: rate of change of lambda [m/s], the forward counterpart
-			// of the lambda_ sent back in sendBodyData()
-			double lambdaDot = forceVec[base + 6];
-
-			// assign inside YADE body state
-			//scene->bodies[ flbox->bIds[i] ]->state->lambdaDot = lambdaDot;
-			Body::byId(flbox->bIds[i], scene)->state->lambdaDot = lambdaDot;
+			// Slot 6: a rate [m/s] that NewtonIntegrator integrates (mode 0), or a
+			// factor applyLambdaFactor() already used once per exchange (mode 1),
+			// in which case the integrated rate must stay zero.
+			Body::byId(flbox->bIds[i], scene)->state->lambdaDot = (lambdaMode == 1) ? 0.0 : forceVec[base + 6];
 
 
 			// add forces into YADE
@@ -728,6 +761,7 @@ void FoamCoupling::action()
 	if (exchangeData()) {
 		resetFluidDomains();
 		runCoupling();
+		applyLambdaFactor();
 		exchangeDeltaTParallel();
 	}
 	setHydroForce();

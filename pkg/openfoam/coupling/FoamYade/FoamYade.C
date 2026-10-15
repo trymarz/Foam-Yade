@@ -110,6 +110,11 @@ void Foam::FoamYade::sendMeshBbox(){
 		MPI_Request req;
 		MPI_Isend(&meshBbox.front(), 6, MPI_DOUBLE, rnk, TAG_GRID_BBOX, interComm, &req);
 		reqVec.push_back(req);
+
+		// One-time handshake: how Yade must apply the value sent in slot 6.
+		MPI_Request modeReq;
+		MPI_Isend(&lambdaMode, 1, MPI_INT, rnk, TAG_LAMBDA_MODE, interComm, &modeReq);
+		reqVec.push_back(modeReq);
 	}
 
 	for (auto rq : reqVec){
@@ -569,8 +574,9 @@ void Foam::FoamYade::sendHydroForceYadeMPI(){
     for (auto& yProc : inCommProcs){
         for (auto & prt : yProc->foundParticles){
 
-            // compute lambdaDot for this particle from its cell
-            scalar ld = 0.0;
+            // Value for this particle from its cell; a particle with no cell
+            // gets the neutral value: no rate (0), or no size change (factor 1).
+            scalar ld = (lambdaMode == 1) ? 1.0 : 0.0;
             const label cellI = prt->inCell;
             if (cellI >= 0 && cellI < lambdaDot.size())
             {
