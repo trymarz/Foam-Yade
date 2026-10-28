@@ -3,6 +3,8 @@
 #ifdef YADE_MPI
 
 #include "FoamCoupling.hpp"
+#include <stdexcept>
+#include <unordered_set>
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wpragmas"
 #pragma GCC diagnostic ignored "-Wsuggest-override"
@@ -188,6 +190,20 @@ void FoamCoupling::getFluidDomainBbox()
 		MPI_Recv(&buff.front(), 6, MPI_DOUBLE, rnk + stride, TAG_GRID_BBOX, INTRACOMM, &status);
 	}
 
+	// One-time handshake: every OpenFOAM rank states the lambda mode; they must agree.
+	for (int rnk = 0; rnk != foamCommSize; ++rnk) {
+		int mode = 0;
+		MPI_Recv(&mode, 1, MPI_INT, rnk + stride, TAG_LAMBDA_MODE, INTRACOMM, &status);
+		if (rnk == 0) {
+			lambdaMode = mode;
+		} else if (mode != lambdaMode) {
+			throw std::runtime_error("FoamCoupling: OpenFOAM ranks disagree on lambdaMode");
+		}
+	}
+	if (lambdaMode != 0 && lambdaMode != 1) {
+		throw std::runtime_error("FoamCoupling: unknown lambdaMode received from OpenFOAM");
+	}
+
 	//
 	fluidDomains.resize(foamCommSize);
 	//create fluidDomainBbox bodies and get their ids.
@@ -346,36 +362,46 @@ void FoamCoupling::sendIntersectionToFluidProcs()
 
 void FoamCoupling::sendBodyData()
 {
-	/* send the particle data to the associated fluid procs. prtData -> pos, vel, angvel, raidus (for sphere), if fiber -> ori  */
+	/* send the particle data to the associated fluid procs. prtData -> pos, vel, angvel, radius (for sphere), lambda, if fiber -> ori
+	 * Stride is 11 doubles per particle. It must match the unpack stride in the
+	 * OpenFOAM-side FoamYade::locateAllParticles()/allocArrays(): there is no
+	 * buffer-layout negotiation over MPI (the only handshake is the particle
+	 * count), so both binaries have to be built from matching revisions. */
 	bool isPeriodic = scene->isPeriodic;
 	for (int f = 0; f != static_cast<int>(fluidDomains.size()); ++f) {
 		const shared_ptr<Body>& flbody = (*scene->bodies)[fluidDomains[f]];
 		if (flbody) {
 			const shared_ptr<FluidDomainBbox> flbox = YADE_PTR_CAST<FluidDomainBbox>(flbody->shape);
 			if (flbox->hasIntersection) {
-				std::vector<double> prtData(10 * flbox->bIds.size(), 1e-50);
+				std::vector<double> prtData(11 * flbox->bIds.size(), 1e-50);
 				for (unsigned int i = 0; i != flbox->bIds.size(); ++i) {
 					const shared_ptr<Body>& b = (*scene->bodies)[flbox->bIds[i]];
 					if (isPeriodic) {
 						const Vector3r& pos = scene->cell->wrapPt(b->state->pos);
-						prtData[10 * i]     = pos[0];
-						prtData[10 * i + 1] = pos[1];
-						prtData[10 * i + 2] = pos[2];
+						prtData[11 * i]     = pos[0];
+						prtData[11 * i + 1] = pos[1];
+						prtData[11 * i + 2] = pos[2];
 
 					} else {
-						prtData[10 * i]     = b->state->pos[0];
-						prtData[10 * i + 1] = b->state->pos[1];
-						prtData[10 * i + 2] = b->state->pos[2];
+						prtData[11 * i]     = b->state->pos[0];
+						prtData[11 * i + 1] = b->state->pos[1];
+						prtData[11 * i + 2] = b->state->pos[2];
 					}
-					prtData[10 * i + 3] = b->state->vel[0];
-					prtData[10 * i + 4] = b->state->vel[1];
-					prtData[10 * i + 5] = b->state->vel[2];
-					prtData[10 * i + 6] = b->state->angVel[0];
-					prtData[10 * i + 7] = b->state->angVel[1];
-					prtData[10 * i + 8] = b->state->angVel[2];
+					prtData[11 * i + 3] = b->state->vel[0];
+					prtData[11 * i + 4] = b->state->vel[1];
+					prtData[11 * i + 5] = b->state->vel[2];
+					prtData[11 * i + 6] = b->state->angVel[0];
+					prtData[11 * i + 7] = b->state->angVel[1];
+					prtData[11 * i + 8] = b->state->angVel[2];
 
 					const shared_ptr<Sphere>& sph = YADE_PTR_CAST<Sphere>(b->shape);
-					prtData[10 * i + 9]           = sph->radius;
+					prtData[11 * i + 9]           = sph->radius;
+
+					// Reverse (Yade -> OpenFOAM) channel for the integrated
+					// particle length scale, the counterpart of the lambdaDot
+					// arriving through hydroForceBuff. OpenFOAM interpolates it
+					// onto the mesh as the lambda field.
+					prtData[11 * i + 10] = b->state->lambda_;
 				}
 				int sz = prtData.size();
 				MPI_Send(&prtData.front(), sz, MPI_DOUBLE, flbox->domainRank, TAG_PRT_DATA, INTRACOMM);
@@ -588,6 +614,26 @@ void FoamCoupling::getParticleForce()
 }
 
 
+void FoamCoupling::applyLambdaFactor()
+{
+	if (lambdaMode != 1) return;
+	if (localRank == yadeMaster and not serialYade) return;
+
+	// A body listed by several fluid domains is multiplied once, by the first.
+	std::unordered_set<Body::id_t> applied;
+	for (const auto& rf : hForce) {
+		int                                indx     = abs(rf.first - localCommSize);
+		const std::vector<double>&         forceVec = rf.second;
+		const shared_ptr<FluidDomainBbox>& flbox    = YADE_PTR_CAST<FluidDomainBbox>((*scene->bodies)[fluidDomains[indx]]->shape);
+		for (unsigned int i = 0; i != flbox->bIds.size(); ++i) {
+			const Body::id_t id = flbox->bIds[i];
+			const double     r  = forceVec[7 * i + 6];
+			if (r <= 0 or not applied.insert(id).second) continue;
+			Body::byId(id, scene)->state->lambda_ *= r;
+		}
+	}
+}
+
 void FoamCoupling::resetFluidDomains()
 {
 	// clear the vector ids held fluidDomainBbox->bIds
@@ -647,12 +693,10 @@ void FoamCoupling::setHydroForce()
 			tx[1] = forceVec[base + 4];
 			tx[2] = forceVec[base + 5];
 
-			// lambdaDot
-			double lambdaDot = forceVec[base + 6];
-
-			// assign inside YADE body state
-			//scene->bodies[ flbox->bIds[i] ]->state->lambdaDot = lambdaDot;
-			Body::byId(flbox->bIds[i], scene)->state->lambdaDot = lambdaDot;
+			// Slot 6: a rate [m/s] that NewtonIntegrator integrates (mode 0), or a
+			// factor applyLambdaFactor() already used once per exchange (mode 1),
+			// in which case the integrated rate must stay zero.
+			Body::byId(flbox->bIds[i], scene)->state->lambdaDot = (lambdaMode == 1) ? 0.0 : forceVec[base + 6];
 
 
 			// add forces into YADE
@@ -717,6 +761,7 @@ void FoamCoupling::action()
 	if (exchangeData()) {
 		resetFluidDomains();
 		runCoupling();
+		applyLambdaFactor();
 		exchangeDeltaTParallel();
 	}
 	setHydroForce();

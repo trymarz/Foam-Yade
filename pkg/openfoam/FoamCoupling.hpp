@@ -45,6 +45,7 @@ private:
 	const int  TAG_FLUID_DT   = 1050;
 	const int  TAG_YADE_DT    = 1060;
 	const int  TAG_SHARED_ID  = 1080;
+	const int  TAG_LAMBDA_MODE = 1100;
 	bool       serialYade     = false;
 	MPI_Comm   FOAMCOMM;  // the communicator used to spawn the FOAM processes.
 	MPI_Comm   INTRACOMM; // the merged communicator to communicate with the FOAM processes.
@@ -69,6 +70,9 @@ public:
 		void resetFluidDomains();
 		void runCoupling();
 		void setHydroForce();
+		//- lambdaMode 1 only: multiply each body's lambda_ by the received factor,
+		//  once per exchange (setHydroForce() runs every DEM step).
+		void applyLambdaFactor();
 		void StartFoamSolver();
 		void SetFoamSolver(const std::string &solverName, unsigned numProcs);
 
@@ -140,6 +144,7 @@ public:
   "In the case of Gaussian interpolation, contribution from every  process is summed using function :yref:`sumHydroForce <FoamCoupling::sumHydroForce>`. \n"
   "4. The interval (substepping) is set automatically (:yref:`FoamCoupling::dataExchangeInterval`) based on dtfoam/dtYade, calculated in function :yref:`exchangeDeltaT<FoamCoupling::exchangeDeltaT>`  ",
     ((int,numParticles,1, , "number of particles in coupling."))
+    ((int,lambdaMode,0,Attr::readonly,"How the value OpenFOAM sends in force slot 6 is applied, set by OpenFOAM at startup: 0 = rate, integrated into :yref:`State.lambda_` by :yref:`NewtonIntegrator`; 1 = factor, :yref:`State.lambda_` multiplied by it once per exchange."))
     ((int,foamVersion,-1,,"version of OpenFoam environment"))
     ((string,foamPath,"",,"path to OpenFoam"))
     ((double,particleDensity,1, , "particle Density")) //not needed  as this is set in foam

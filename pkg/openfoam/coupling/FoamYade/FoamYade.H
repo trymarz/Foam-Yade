@@ -44,6 +44,12 @@ public:
 	YadeParticle() {};
 	double                              dia;
 	scalar                              lambdaDot = 0;
+	// Integrated particle length scale [m], received from Yade's
+	// State::lambda_ (Yade integrates it from lambdaDot every DEM step and
+	// sends it back through the particle-data buffer). The 1.0 default matches
+	// Yade's own, so an unset particle reads as an unstretched spring rather
+	// than as zero size.
+	scalar                              lambda    = 1.0;
 	bool                                isFib = false;
 	double                              vol;
 	point                               pos;
@@ -95,6 +101,7 @@ protected:
     	//const int    TAG_LAMBDA_ID  = 1071;   // DasteXar : send corresponding particle IDs (int[]) (link to FoamYade.C)
 	const int    TAG_SHARED_ID  = 1080;
 	const int    TAG_ID         = 1090;
+	const int    TAG_LAMBDA_MODE = 1100;  // one int at startup: 0 rate, 1 factor
 	
 	const double small          = 1e-09;
 	MPI_Comm     parentComm;
@@ -126,7 +133,8 @@ public:
 	volScalarField&                          alpha;
 	volVectorField&                          uSource;
 	volVectorField&                          uParticle;
-	volScalarField&                          lambdaDot;   // DasteXar (for solver)
+	volScalarField&                          lambdaDot;   // per-cell value sent to Yade: rate [m/s] (lambdaMode 0) or factor r [-] (lambdaMode 1)
+	int                                      lambdaMode;  // 0: Yade integrates lambdaDot as a rate; 1: Yade multiplies lambda by it once per exchange
 	void                                     updateSources();
 	bool                                     serialYade;
 
@@ -157,8 +165,9 @@ public:
 	        volVectorField&                      _uParticle,
 	        volScalarField&                      _uCoeff,
 	        volVectorField&                      _uInterp,
-	        volScalarField&                      _lambdaDot, // to pass LambdaDot from OF to YADE (DasteXar) (for solver)
-	        bool                                 gaussianInterp)
+	        volScalarField&                      _lambdaDot, // rate of change of lambda [m/s], passed from OpenFOAM to Yade
+	        bool                                 gaussianInterp,
+	        int                                  _lambdaMode = 0)
 	        : mesh(_mesh)
 	        , U(_U)
 	        , gradP(_gradP)
@@ -172,7 +181,8 @@ public:
 	        , alpha(_alpha)
 	        , uSource(_uSource)
 	        , uParticle(_uParticle)
-	        , lambdaDot(_lambdaDot)     // to pass LambdaDot from OF to YADE (DasteXar) (for solver)
+	        , lambdaDot(_lambdaDot)
+	        , lambdaMode(_lambdaMode)
 	        , mshTree(mesh.C())
 	{
 		isGaussianInterp = gaussianInterp;

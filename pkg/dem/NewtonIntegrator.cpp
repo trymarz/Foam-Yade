@@ -280,6 +280,18 @@ void NewtonIntegrator::action()
 
 		// update positions from velocities (or torque, for the aspherical integrator)
 		leapfrogTranslate(state, dt);
+
+		// Integrate the per-particle length scale lambda from the rate
+		// lambdaDot supplied by the OpenFOAM coupling. Yade owns lambda:
+		// OpenFOAM computes only the rate and reads the integrated value
+		// back through FoamCoupling::sendBodyData(). Deliberately outside the
+		// blockedDOFs test above -- a body loses lambda to chemistry even when
+		// it is translationally fixed. lambdaDot is 0.0 unless FoamCoupling
+		// set it, so this is a no-op in an uncoupled simulation. Integrating
+		// here rather than in FoamCoupling::action() sub-cycles lambda at every
+		// DEM step, while the coupling itself only runs every
+		// dataExchangeInterval.
+		state->lambda_ += state->lambdaDot * dt;
 		if (!useAspherical) {
 			leapfrogSphericalRotate(state, dt);
 		} else {

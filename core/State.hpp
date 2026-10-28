@@ -63,7 +63,8 @@ public:
 		((unsigned,blockedDOFs,,,"[Will be overridden]"))
 		((bool,isDamped,true,,"Damping in :yref:`NewtonIntegrator` can be deactivated for individual particles by setting this variable to FALSE. E.g. damping is inappropriate for particles in free flight under gravity but it might still be applicable to other particles in the same simulation."))
 		((Real,densityScaling,-1,,"|yupdate| see :yref:`GlobalStiffnessTimeStepper::targetDt`."))
-		((Real,lambdaDot,0.0,,"DasteXar – per-particle lambdaDot received from OpenFOAM")) // DasteXar 
+		((Real,lambdaDot,0.0,,"Per-particle rate of change of lambda [m/s] (d(lambda)/dt), received from OpenFOAM's chemistry/temperature-driven lambdaDotModel every coupling exchange. This is a rate, not a value -- it is only ever consumed by integrating it, in :yref:`NewtonIntegrator`, into :yref:`lambda_<State.lambda_>`. Stays 0 when :yref:`FoamCoupling.lambdaMode` is 1: the coupling then multiplies :yref:`lambda_<State.lambda_>` by a factor once per exchange instead."))
+		((Real,lambda_,1.0,,"Per-particle lambda [m], integrated in :yref:`NewtonIntegrator` from :yref:`lambdaDot<State.lambdaDot>` and sent back to OpenFOAM for mesh-level interpolation, mirroring how velocity becomes Us. Trailing underscore avoids Python's reserved 'lambda' keyword."))
 #ifdef YADE_SPH
 		((Real,rho, -1.0,/*Attr::readonly*/, "Current density (only for SPH-model)"))      // [Mueller2003], (12)
 		((Real,rho0,-1.0,/*Attr::readonly*/, "Rest density (only for SPH-model)"))         // [Mueller2003], (12)
