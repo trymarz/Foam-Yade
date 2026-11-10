@@ -78,6 +78,9 @@ public:
 
 		void buildLocalIds();
 		void exchangeDeltaTParallel();
+		//- Exchange interval from foamDt/yadeDt; in rate mode (0) aborts the coupled job
+		//  unless yadeDt <= foamDt and their ratio is an integer (lambda is integrated per DEM step).
+		void setExchangeInterval(Real yadeDt);
 		void insertBodyId(int);
 		bool eraseId(int);
 		int getNumBodies();

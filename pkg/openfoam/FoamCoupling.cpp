@@ -3,6 +3,9 @@
 #ifdef YADE_MPI
 
 #include "FoamCoupling.hpp"
+#include <cmath>
+#include <iostream>
+#include <sstream>
 #include <stdexcept>
 #include <unordered_set>
 #pragma GCC diagnostic push
@@ -158,7 +161,26 @@ void FoamCoupling::exchangeDeltaT()
 	MPI_Bcast(&yadeDt, 1, MPI_DOUBLE, rank, INTRACOMM);
 	// calculate the interval . TODO: to include hydrodynamic time scale if inertial in openfoam
 	// here -> hDeltaT = getViscousTimeScale();
-	dataExchangeInterval = (long int)((yadeDt < foamDeltaT) ? foamDeltaT / yadeDt : 1);
+	setExchangeInterval(yadeDt);
+}
+
+void FoamCoupling::setExchangeInterval(Real yadeDt)
+{
+	if (lambdaMode == 1) {
+		dataExchangeInterval = (long int)((yadeDt < foamDeltaT) ? foamDeltaT / yadeDt : 1);
+		return;
+	}
+	const Real     ratio = foamDeltaT / yadeDt;
+	const long int n     = std::lround(ratio);
+	if (n < 1 or std::abs(ratio - n) > 1e-6 * n) {
+		std::ostringstream msg;
+		msg << "FoamCoupling: in a lambdaDot rate mode Yade's dt must divide the OpenFOAM deltaT exactly"
+		    << " (yadeDt <= foamDt, foamDt/yadeDt an integer); got yadeDt = " << yadeDt << ", foamDt = " << foamDeltaT
+		    << ", ratio = " << ratio << ". Set O.dt to foamDt/N.\n";
+		std::cerr << msg.str() << std::flush;
+		MPI_Abort(INTRACOMM, 1);
+	}
+	dataExchangeInterval = n;
 }
 
 Real FoamCoupling::getViscousTimeScale()
@@ -738,7 +760,7 @@ void FoamCoupling::exchangeDeltaTParallel()
 
 		// calculate the interval . TODO: to include hydrodynamic time scale if inertial in openfoam
 		// here -> hDeltaT = getViscousTimeScale();
-		dataExchangeInterval = (long int)((yadeDt < foamDeltaT) ? foamDeltaT / yadeDt : 1);
+		setExchangeInterval(yadeDt);
 	} else {
 		exchangeDeltaT();
 	}
