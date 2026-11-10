@@ -108,6 +108,7 @@ public:
 		std::vector<std::pair<Body::id_t, std::vector<Body::id_t> > > sharedIds;
 		std::vector<std::pair<int, std::map<int, int> > > sharedIdsMapIndx;
 		std::vector<std::pair<int, std::vector<double>> > hForce;
+		std::vector<std::pair<int, std::vector<int>> > verifyTracking; // per entry of hForce: search result per bIds entry, 1 = found, -1 = not
 		std::vector<std::pair<int, int> > inCommunicationProc;
 		std::vector<Body::id_t> localIds; // 'local', those Ids in the present subdomain  that are in coupling, used in parallel mode.
 		
