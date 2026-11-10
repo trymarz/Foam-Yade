@@ -3,6 +3,9 @@
 #ifdef YADE_MPI
 
 #include "FoamCoupling.hpp"
+#include <cmath>
+#include <iostream>
+#include <sstream>
 #include <stdexcept>
 #include <unordered_set>
 #pragma GCC diagnostic push
@@ -158,7 +161,26 @@ void FoamCoupling::exchangeDeltaT()
 	MPI_Bcast(&yadeDt, 1, MPI_DOUBLE, rank, INTRACOMM);
 	// calculate the interval . TODO: to include hydrodynamic time scale if inertial in openfoam
 	// here -> hDeltaT = getViscousTimeScale();
-	dataExchangeInterval = (long int)((yadeDt < foamDeltaT) ? foamDeltaT / yadeDt : 1);
+	setExchangeInterval(yadeDt);
+}
+
+void FoamCoupling::setExchangeInterval(Real yadeDt)
+{
+	if (lambdaMode == 1) {
+		dataExchangeInterval = (long int)((yadeDt < foamDeltaT) ? foamDeltaT / yadeDt : 1);
+		return;
+	}
+	const Real     ratio = foamDeltaT / yadeDt;
+	const long int n     = std::lround(ratio);
+	if (n < 1 or std::abs(ratio - n) > 1e-6 * n) {
+		std::ostringstream msg;
+		msg << "FoamCoupling: in a lambdaDot rate mode Yade's dt must divide the OpenFOAM deltaT exactly"
+		    << " (yadeDt <= foamDt, foamDt/yadeDt an integer); got yadeDt = " << yadeDt << ", foamDt = " << foamDeltaT
+		    << ", ratio = " << ratio << ". Set O.dt to foamDt/N.\n";
+		std::cerr << msg.str() << std::flush;
+		MPI_Abort(INTRACOMM, 1);
+	}
+	dataExchangeInterval = n;
 }
 
 Real FoamCoupling::getViscousTimeScale()
@@ -422,8 +444,7 @@ void FoamCoupling::verifyParticleDetection()
 
 	//std::map<int, std::vector<int> > verifyTracking;  //vector containing domainRank, vector of "found/misses" for each body, miss = -1, found = 1.
 
-	std::vector<std::pair<int, std::vector<int>>> verifyTracking;
-
+	verifyTracking.clear();
 	for (const auto& proc : inCommunicationProc) {
 		std::vector<int> vt(proc.second, -1);
 		verifyTracking.push_back(std::make_pair(proc.first, std::move(vt)));
@@ -619,16 +640,18 @@ void FoamCoupling::applyLambdaFactor()
 	if (lambdaMode != 1) return;
 	if (localRank == yadeMaster and not serialYade) return;
 
-	// A body listed by several fluid domains is multiplied once, by the first.
+	// A body listed by several fluid domains is multiplied once, by the one that found it.
 	std::unordered_set<Body::id_t> applied;
-	for (const auto& rf : hForce) {
+	for (unsigned int k = 0; k != hForce.size(); ++k) {
+		const auto&                        rf       = hForce[k];
 		int                                indx     = abs(rf.first - localCommSize);
 		const std::vector<double>&         forceVec = rf.second;
+		const std::vector<int>&            found    = verifyTracking[k].second;
 		const shared_ptr<FluidDomainBbox>& flbox    = YADE_PTR_CAST<FluidDomainBbox>((*scene->bodies)[fluidDomains[indx]]->shape);
 		for (unsigned int i = 0; i != flbox->bIds.size(); ++i) {
 			const Body::id_t id = flbox->bIds[i];
 			const double     r  = forceVec[7 * i + 6];
-			if (r <= 0 or not applied.insert(id).second) continue;
+			if (found[i] <= 0 or r <= 0 or not applied.insert(id).second) continue;
 			Body::byId(id, scene)->state->lambda_ *= r;
 		}
 	}
@@ -658,9 +681,11 @@ void FoamCoupling::setHydroForce()
 	if (localRank == yadeMaster and not serialYade) {
 		return;
 	}
-	for (const auto& rf : hForce) {
+	for (unsigned int k = 0; k != hForce.size(); ++k) {
+		const auto&                        rf       = hForce[k];
 		int                                indx     = abs(rf.first - localCommSize);
 		const std::vector<double>&         forceVec = rf.second;
+		const std::vector<int>&            found    = verifyTracking[k].second;
 		const shared_ptr<FluidDomainBbox>& flbox    = YADE_PTR_CAST<FluidDomainBbox>((*scene->bodies)[fluidDomains[indx]]->shape);
 		for (unsigned int i = 0; i != flbox->bIds.size(); ++i) {
 			
@@ -693,10 +718,10 @@ void FoamCoupling::setHydroForce()
 			tx[1] = forceVec[base + 4];
 			tx[2] = forceVec[base + 5];
 
-			// Slot 6: a rate [m/s] that NewtonIntegrator integrates (mode 0), or a
-			// factor applyLambdaFactor() already used once per exchange (mode 1),
-			// in which case the integrated rate must stay zero.
-			Body::byId(flbox->bIds[i], scene)->state->lambdaDot = (lambdaMode == 1) ? 0.0 : forceVec[base + 6];
+			// Slot 6: a rate [m/s] NewtonIntegrator integrates (mode 0), or a factor
+			// applyLambdaFactor() already used (mode 1; the rate stays zero). Only the
+			// domain that found the centre sets it; the others send zeros (#229).
+			if (found[i] > 0) Body::byId(flbox->bIds[i], scene)->state->lambdaDot = (lambdaMode == 1) ? 0.0 : forceVec[base + 6];
 
 
 			// add forces into YADE
@@ -735,7 +760,7 @@ void FoamCoupling::exchangeDeltaTParallel()
 
 		// calculate the interval . TODO: to include hydrodynamic time scale if inertial in openfoam
 		// here -> hDeltaT = getViscousTimeScale();
-		dataExchangeInterval = (long int)((yadeDt < foamDeltaT) ? foamDeltaT / yadeDt : 1);
+		setExchangeInterval(yadeDt);
 	} else {
 		exchangeDeltaT();
 	}
