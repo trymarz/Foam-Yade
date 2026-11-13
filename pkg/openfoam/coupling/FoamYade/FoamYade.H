@@ -3,6 +3,10 @@
 #ifndef FoamYadeMPI_H
 #define FoamYadeMPI_H
 
+// Coupling API version: bump on any change to the FoamYade constructor or the
+// MPI buffer layout. porousGasificationFoam static_asserts it (its #257).
+#define FOAMYADE_COUPLING_API 1
+
 #include <algorithm>
 #include <functional>
 #include <map>
