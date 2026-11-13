@@ -96,6 +96,19 @@ fluidBodies = []
 USE_CPP_REALLOC = True
 USE_CPP_INTERS = False  #sending intersections using mpi4py sometimes fails (dependent on mpi4py version, needs confirmation) (ERR : MPI_ERR_TRUNCATE)
 
+# Engines mpy treats as the fluid coupling when FLUID_COUPLING is set: the
+# legacy FoamCoupling, or PgfCoupling (porousGasificationFoam #271).
+FLUID_COUPLING_ENGINES = ("FoamCoupling", "PgfCoupling")
+
+
+def fluidCouplingEngine():
+	"""Return the fluid-coupling engine in O.engines (one of FLUID_COUPLING_ENGINES)."""
+	for e in O.engines:
+		if e.__class__.__name__ in FLUID_COUPLING_ENGINES:
+			return e
+	raise RuntimeError("FLUID_COUPLING is set but O.engines holds none of " + str(FLUID_COUPLING_ENGINES))
+
+
 ### Internals
 
 comm = None
@@ -1100,7 +1113,7 @@ def splitScene():
 				subD = O.subD
 
 		if FLUID_COUPLING:
-			fluidCoupling = typedEngine("FoamCoupling")
+			fluidCoupling = fluidCouplingEngine()
 			fluidCoupling.comm = comm
 			fluidCoupling.setIdList(fluidBodies)
 			fluidCoupling.couplingModeParallel = True
@@ -1345,7 +1358,7 @@ def mpirun(nSteps, np=None, withMerge=False):
 	if (np == 1):
 		mprint("single-core, fall back to O.run()")
 		if FLUID_COUPLING:
-			fluidCoupling = typedEngine("FoamCoupling")
+			fluidCoupling = fluidCouplingEngine()
 			fluidCoupling.comm = comm
 			fluidCoupling.setIdList(fluidBodies)
 
@@ -1378,7 +1391,7 @@ def mpirun(nSteps, np=None, withMerge=False):
 			wprint("mpirun command sent to ", w)
 
 	if FLUID_COUPLING:
-		fluidCoupling = typedEngine("FoamCoupling")
+		fluidCoupling = fluidCouplingEngine()
 		fluidCoupling.comm = comm
 
 	# split if needed
