@@ -204,6 +204,14 @@ void VTKRecorder::action()
 	radii->SetNumberOfComponents(1);
 	radii->SetName("radii");
 
+	vtkSmartPointer<vtkDoubleArrayFromReal> spheresLambda = vtkSmartPointer<vtkDoubleArrayFromReal>::New();
+	spheresLambda->SetNumberOfComponents(1);
+	spheresLambda->SetName("lambda");
+
+	vtkSmartPointer<vtkDoubleArrayFromReal> spheresLambdaDot = vtkSmartPointer<vtkDoubleArrayFromReal>::New();
+	spheresLambdaDot->SetNumberOfComponents(1);
+	spheresLambdaDot->SetName("lambdaDot");
+
 	vtkSmartPointer<vtkDoubleArrayFromReal> spheresSigI = vtkSmartPointer<vtkDoubleArrayFromReal>::New();
 	spheresSigI->SetNumberOfComponents(1);
 	spheresSigI->SetName("sigI");
@@ -703,6 +711,8 @@ void VTKRecorder::action()
 				pid[0] = spheresPos->InsertNextPoint(pos);
 				spheresCells->InsertNextCell(1, pid);
 				radii->InsertNextValue(sphere->radius);
+				spheresLambda->InsertNextValue(b->state->lambda_);
+				spheresLambdaDot->InsertNextValue(b->state->lambdaDot);
 				if (recActive[REC_BSTRESS]) {
 					const Matrix3r&                         bStress = bStresses[b->getId()];
 					Eigen::SelfAdjointEigenSolver<Matrix3r> solver(
@@ -975,6 +985,8 @@ void VTKRecorder::action()
 		spheresUg->SetPoints(spheresPos);
 		spheresUg->SetCells(VTK_VERTEX, spheresCells);
 		spheresUg->GetPointData()->AddArray(radii);
+		spheresUg->GetPointData()->AddArray(spheresLambda);
+		spheresUg->GetPointData()->AddArray(spheresLambdaDot);
 		if (recActive[REC_ID]) spheresUg->GetPointData()->AddArray(spheresId);
 		if (recActive[REC_MASK]) spheresUg->GetPointData()->AddArray(spheresMask);
 		if (recActive[REC_MASS]) spheresUg->GetPointData()->AddArray(spheresMass);

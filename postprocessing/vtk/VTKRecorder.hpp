@@ -85,7 +85,7 @@ public:
 	Base recorders save the geometry (unstructured or structured grids) on which other data is defined. They are implicitly activated by many of the other recorders. Each of them creates a new file (or a block, if :yref:`multiblock <VTKRecorder.multiblock>` is set).
 
 	``spheres``
-		Saves positions and radii (``radii``) of :yref:`spherical<Sphere>` particles.
+		Saves positions and radii (``radii``) of :yref:`spherical<Sphere>` particles, along with each particle's :yref:`lambda_<State.lambda_>` (``lambda``) and :yref:`lambdaDot<State.lambdaDot>` (``lambdaDot``).
 	``facets``
 		Save :yref:`facets<Facet>` positions (vertices).
 	``boxes``
